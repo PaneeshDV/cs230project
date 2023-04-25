@@ -1,7 +1,190 @@
 #include "cache.h"
 #include "set.h"
-#include "ooo_cpu.h"
+#include"ooo_cpu.h"
+
 uint64_t l2pf_access = 0;
+
+uint8_t CACHE::higher_level_dirty(uint64_t address)
+{
+    if(cache_type == IS_L1D || cache_type == IS_L1I){
+        uint32_t set = get_set(address);
+        uint32_t way = get_way(address,set);
+
+        if(block[set][way].valid && block[set][way].tag == address){
+            return block[set][way].dirty;
+        }
+    }
+    else {
+        uint8_t upper_level_dirty = 0;
+
+      
+            // icache is never dirty, so check dcache only
+            upper_level_dirty = ((CACHE *)upper_level_dcache[cpu])->higher_level_dirty(address);
+
+            if (upper_level_dirty) {
+                return 1;
+            }
+        
+
+        uint32_t set = get_set(address);
+        uint32_t way = get_way(address,set);
+
+        if(block[set][way].valid && block[set][way].tag == address){
+            return block[set][way].dirty;
+        }
+
+        // check if the block is dirty
+        // for (way = 0; way < NUM_WAY; way++) {
+        //     if (block[set][way].valid && (block[set][way].tag == address)) {
+        //         return block[set][way].dirty;
+        //     }
+        // }
+
+    }
+
+    // else {
+    //     uint8_t upper_level_dirty = 0;
+
+    //     // icache is never dirty, so check dcache only
+    //     if (upper_level_dcache[cpu]) {
+    //         upper_level_dirty = ((CACHE *)upper_level_dcache[cpu])->higher_level_dirty(address);
+    //     }
+
+    //     if (upper_level_dirty) {
+    //         return 1;
+    //     }
+
+    //     uint32_t set = get_set(address);
+    //     uint32_t way = get_way(address,set);
+
+    //     // check if the block is dirty
+    //     // for (way = 0; way < NUM_WAY; way++) {
+    //     //     if (block[set][way].valid && (block[set][way].tag == address)) {
+    //     //         return block[set][way].dirty;
+    //     //     }
+    //     // }
+    //     if(block[set][way].valid && block[set][way].tag == address){
+    //         return block[set][way].dirty;
+    //     }
+    // }
+
+    return 0;
+}
+
+int CACHE::back_invalidate(uint8_t c_type,int addr,uint32_t fill_cpu,int fill_level,uint32_t instruction_id){
+    int s1=ooo_cpu[fill_cpu].L1D.get_set(addr);
+    int w1=ooo_cpu[fill_cpu].L1D.get_way(addr,s1);
+    int s2=ooo_cpu[fill_cpu].L1I.get_set(addr);
+    int w2=ooo_cpu[fill_cpu].L1I.get_way(addr,s2);
+    int s3=ooo_cpu[fill_cpu].L2C.get_set(addr);
+    int w3=ooo_cpu[fill_cpu].L2C.get_way(addr,s3);
+  
+    uint32_t set = get_set(addr), way;
+
+    
+    if(c_type==IS_L1D || c_type == IS_L1I) return 0;
+   
+    int send=0;
+    if(c_type==IS_L2C){
+        if(ooo_cpu[fill_cpu].L1D.block[s1][w1].dirty && w1 < L1D_WAY){
+            block[set][way].data=ooo_cpu[fill_cpu].L1D.block[s1][w1].data;
+            block[set][way].dirty=1;
+            send=1;
+        }
+        if(ooo_cpu[fill_cpu].L1I.block[s2][w2].dirty && w2 < L1I_WAY){
+            block[set][way].data=ooo_cpu[fill_cpu].L1I.block[s2][w2].data;
+            block[set][way].dirty=1;
+
+            send=2;
+        }
+
+    }
+    if(c_type==IS_LLC){
+        if(ooo_cpu[fill_cpu].L2C.block[s3][w3].dirty && w3 < L2C_WAY){
+            block[set][way].data=ooo_cpu[fill_cpu].L2C.block[s3][w3].data;
+            block[set][way].dirty=1;
+
+            send=3;
+        }
+         if(ooo_cpu[fill_cpu].L1D.block[s1][w1].dirty && w1 < L1D_WAY){
+            block[set][way].data=ooo_cpu[fill_cpu].L1D.block[s1][w1].data;
+            block[set][way].dirty=1;
+
+            send=1;
+        }
+        if(ooo_cpu[fill_cpu].L1I.block[s2][w2].dirty && w2 < L1I_WAY){
+            block[set][way].data=ooo_cpu[fill_cpu].L1I.block[s2][w2].data;
+            block[set][way].dirty=1;
+            send=2;
+        }
+       
+    }
+    // PACKET w;
+    // w.fill_level = fill_level << 1;
+    // w.cpu = fill_cpu;
+    // w.instr_id = instruction_id;
+    // w.ip = 0; // writeback does not have ip
+    // w.type = WRITEBACK;
+    // w.event_cycle = current_core_cycle[fill_cpu];
+
+    // if(send==1){
+    //     w.address = ooo_cpu[fill_cpu].L1D.block[s1][w1].address;
+    //     w.full_addr = ooo_cpu[fill_cpu].L1D.block[s1][w1].full_addr;
+    //     w.data = ooo_cpu[fill_cpu].L1D.block[s1][w1].data;
+    // }
+    // if(send==2){
+    //     w.address = ooo_cpu[fill_cpu].L1I.block[s2][w2].address;
+    //     w.full_addr = ooo_cpu[fill_cpu].L1I.block[s2][w2].full_addr;
+    //     w.data = ooo_cpu[fill_cpu].L1I.block[s2][w2].data;
+
+    // }
+    // if(send==3){
+    //     w.address = ooo_cpu[fill_cpu].L2C.block[s3][w3].address;
+    //     w.full_addr = ooo_cpu[fill_cpu].L2C.block[s3][w3].full_addr;
+    //     w.data = ooo_cpu[fill_cpu].L2C.block[s3][w3].data;
+    // }
+    // lower_level->add_wq(&w);
+
+    //  if (lower_level) {
+    //             if (lower_level->get_occupancy(2, addr) == lower_level->get_size(2,addr)) {
+
+    //                 // lower level WQ is full, cannot replace this victim
+    //                  //do_fill = 0;
+    //                 lower_level->increment_WQ_FULL(addr);
+    //                 // STALL[MSHR.entry[mshr_index].type]++;
+
+    //                 DP ( if (warmup_complete[fill_cpu]) {
+    //                 cout << "[" << NAME << "] " << __func__ << "do_fill: " << +do_fill;
+    //                 cout << " lower level wq is full!" << " fill_addr: " << hex << MSHR.entry[mshr_index].address;
+    //                 cout << " victim_addr: " << block[set][way].tag << dec << endl; });
+    //             }
+    //             else {
+    //                 lower_level->add_wq(&w);
+    //             }
+    // }
+
+     if(cache_type==IS_L2C){
+        ooo_cpu[fill_cpu].L1D.invalidate_entry(addr);
+        ooo_cpu[fill_cpu].L1I.invalidate_entry(addr);
+        ooo_cpu[fill_cpu].L1D.block[s1][w1].dirty=0;
+        ooo_cpu[fill_cpu].L1I.block[s2][w2].dirty=0;
+     }
+
+    if(cache_type==IS_LLC){
+        ooo_cpu[fill_cpu].L1D.invalidate_entry(addr);
+        ooo_cpu[fill_cpu].L1I.invalidate_entry(addr);
+        ooo_cpu[fill_cpu].L2C.invalidate_entry(addr);
+        int s3=ooo_cpu[fill_cpu].L2C.get_set(addr);
+        int w3=ooo_cpu[fill_cpu].L2C.get_way(addr,s3);
+        ooo_cpu[fill_cpu].L1D.block[s1][w1].dirty=0;
+        ooo_cpu[fill_cpu].L1I.block[s2][w2].dirty=0;
+        ooo_cpu[fill_cpu].L2C.block[s3][w3].dirty=0;
+                
+    }
+
+    return send;
+
+}
 
 void CACHE::handle_fill()
 {
@@ -83,7 +266,7 @@ void CACHE::handle_fill()
         uint8_t  do_fill = 1;
 
         // is this dirty?
-        if (block[set][way].dirty) {
+        if (block[set][way].dirty && higher_level_dirty(block[set][way].address)) {
 
             // check if the lower level WQ has enough room to keep this writeback request
             if (lower_level) {
@@ -100,8 +283,9 @@ void CACHE::handle_fill()
                     cout << " victim_addr: " << block[set][way].tag << dec << endl; });
                 }
                 else {
+                   
                     PACKET writeback_packet;
-
+                    back_invalidate(cache_type,block[set][way].address,fill_cpu,fill_level,MSHR.entry[mshr_index].instr_id);
                     writeback_packet.fill_level = fill_level << 1;
                     writeback_packet.cpu = fill_cpu;
                     writeback_packet.address = block[set][way].address;
@@ -113,6 +297,7 @@ void CACHE::handle_fill()
                     writeback_packet.event_cycle = current_core_cycle[fill_cpu];
 
                     lower_level->add_wq(&writeback_packet);
+                    
                 }
             }
 #ifdef SANITY_CHECK
@@ -153,27 +338,6 @@ void CACHE::handle_fill()
             sim_miss[fill_cpu][MSHR.entry[mshr_index].type]++;
             sim_access[fill_cpu][MSHR.entry[mshr_index].type]++;
 
-            int a1=block[set][way].address;
-            if(cache_type==IS_LLC){
-
-                if(ooo_cpu[fill_cpu].L2C.invalidate_entry(a1)==-1){}
-                else{
-                    ooo_cpu[fill_cpu].L1D.invalidate_entry(a1);
-                    ooo_cpu[fill_cpu].L1I.invalidate_entry(a1);
-
-                }
-
-
-            }
-            if(cache_type==IS_L2C){
-                ooo_cpu[fill_cpu].L1D.invalidate_entry(a1);
-                ooo_cpu[fill_cpu].L1I.invalidate_entry(a1);
-                
-            }
-            
-            
-
-            
             fill_cache(set, way, &MSHR.entry[mshr_index]);
 
             // RFO marks cache line dirty
@@ -434,7 +598,7 @@ void CACHE::handle_writeback()
                 uint8_t  do_fill = 1;
 
                 // is this dirty?
-                if (block[set][way].dirty) {
+                if (block[set][way].dirty && higher_level_dirty(block[set][way].address)) {
 
                     // check if the lower level WQ has enough room to keep this writeback request
                     if (lower_level) { 
@@ -451,6 +615,8 @@ void CACHE::handle_writeback()
                             cout << " victim_addr: " << block[set][way].tag << dec << endl; });
                         }
                         else { 
+                    back_invalidate(cache_type,block[set][way].address,writeback_cpu,fill_level,WQ.entry[index].instr_id);
+
                             PACKET writeback_packet;
 
                             writeback_packet.fill_level = fill_level << 1;
@@ -464,6 +630,7 @@ void CACHE::handle_writeback()
                             writeback_packet.event_cycle = current_core_cycle[writeback_cpu];
 
                             lower_level->add_wq(&writeback_packet);
+                          
                         }
                     }
 #ifdef SANITY_CHECK

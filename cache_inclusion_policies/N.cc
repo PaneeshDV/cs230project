@@ -153,9 +153,6 @@ void CACHE::handle_fill()
             sim_miss[fill_cpu][MSHR.entry[mshr_index].type]++;
             sim_access[fill_cpu][MSHR.entry[mshr_index].type]++;
 
-            // int a1=block[set][way].address<<LOG2_BLOCK_SIZE;
-
-
             fill_cache(set, way, &MSHR.entry[mshr_index]);
 
             // RFO marks cache line dirty

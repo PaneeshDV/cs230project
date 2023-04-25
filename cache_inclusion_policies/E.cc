@@ -27,6 +27,54 @@ void CACHE::handle_fill()
         else
             way = find_victim(fill_cpu, MSHR.entry[mshr_index].instr_id, set, block[set], MSHR.entry[mshr_index].ip, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].type);
 
+         if (cache_type == IS_LLC) {
+            // send data/instruction to higher level cache
+            if (MSHR.entry[mshr_index].fill_level < fill_level) {
+                if (MSHR.entry[mshr_index].instruction) 
+                    upper_level_icache[fill_cpu]->return_data(&MSHR.entry[mshr_index]);
+                else // data
+                    upper_level_dcache[fill_cpu]->return_data(&MSHR.entry[mshr_index]);
+            }
+
+            MSHR.remove_queue(&MSHR.entry[mshr_index]);
+            MSHR.num_returned--;
+
+            update_fill_cycle();
+
+            return;
+        }
+         uint8_t  do_fill = 1;
+
+        if (cache_type == IS_L2C && block[set][way].valid==1 && block[set][way].dirty==0) {
+            
+                
+                    if (lower_level->get_occupancy(2, block[set][way].address) == lower_level->get_size(2, block[set][way].address)) {
+                        // lower level WQ is full, cannot replace this victim
+                         do_fill = 0;
+                        lower_level->increment_WQ_FULL(block[set][way].address);
+                        STALL[MSHR.entry[mshr_index].type]++;
+
+                        DP ( if (warmup_complete[fill_cpu]) {
+                        cout << "[" << NAME << "] " << __func__ << "do_fill: " << +do_fill;
+                        cout << " lower level wq is full!" << " fill_addr: " << hex << MSHR.entry[mshr_index].address;
+                        cout << " victim_addr: " << block[set][way].tag << dec << endl; });
+                    }
+                    else {
+                        PACKET writeback_packet;
+
+                        writeback_packet.fill_level = fill_level << 1;
+                        writeback_packet.cpu = fill_cpu;
+                        writeback_packet.address = block[set][way].address;
+                        writeback_packet.full_addr = block[set][way].full_addr;
+                        writeback_packet.data = block[set][way].data;
+                        writeback_packet.instr_id = MSHR.entry[mshr_index].instr_id;
+                        writeback_packet.ip = 0; // writeback does not have ip
+                        writeback_packet.type = WRITEBACK;
+                        writeback_packet.event_cycle = current_core_cycle[fill_cpu];
+                        lower_level->add_wq(&writeback_packet);
+                    }
+                
+            }
 #ifdef LLC_BYPASS
         if ((cache_type == IS_LLC) && (way == LLC_WAY)) { // this is a bypass that does not fill the LLC
 
@@ -39,6 +87,9 @@ void CACHE::handle_fill()
                 update_replacement_state(fill_cpu, set, way, MSHR.entry[mshr_index].full_addr, MSHR.entry[mshr_index].ip, 0, MSHR.entry[mshr_index].type, 0);
 
             // COLLECT STATS
+
+
+            
             sim_miss[fill_cpu][MSHR.entry[mshr_index].type]++;
             sim_access[fill_cpu][MSHR.entry[mshr_index].type]++;
 
@@ -80,10 +131,10 @@ void CACHE::handle_fill()
         }
 #endif
 
-        uint8_t  do_fill = 1;
+       
 
         // is this dirty?
-        if (block[set][way].dirty) {
+        if (block[set][way].dirty && block[set][way].valid) {
 
             // check if the lower level WQ has enough room to keep this writeback request
             if (lower_level) {
@@ -153,42 +204,11 @@ void CACHE::handle_fill()
             sim_miss[fill_cpu][MSHR.entry[mshr_index].type]++;
             sim_access[fill_cpu][MSHR.entry[mshr_index].type]++;
 
-            // int a1=block[set][way].address<<LOG2_BLOCK_SIZE;
+            
 
-            if(MSHR.entry[mshr_index].fill_level ==fill_level){
-                
-                if (lower_level) {
-                if (lower_level->get_occupancy(2, block[set][way].address) == lower_level->get_size(2, block[set][way].address)) {
-
-                    // lower level WQ is full, cannot replace this victim
-                    do_fill = 0;
-                    lower_level->increment_WQ_FULL(block[set][way].address);
-                    STALL[MSHR.entry[mshr_index].type]++;
-
-                    DP ( if (warmup_complete[fill_cpu]) {
-                    cout << "[" << NAME << "] " << __func__ << "do_fill: " << +do_fill;
-                    cout << " lower level wq is full!" << " fill_addr: " << hex << MSHR.entry[mshr_index].address;
-                    cout << " victim_addr: " << block[set][way].tag << dec << endl; });
-                }
-                else {
-                    PACKET writeback_packet;
-
-                    writeback_packet.fill_level = fill_level << 1;
-                    writeback_packet.cpu = fill_cpu;
-                    writeback_packet.address = block[set][way].address;
-                    writeback_packet.full_addr = block[set][way].full_addr;
-                    writeback_packet.data = block[set][way].data;
-                    writeback_packet.instr_id = MSHR.entry[mshr_index].instr_id;
-                    writeback_packet.ip = 0; // writeback does not have ip
-                    writeback_packet.type = WRITEBACK;
-                    writeback_packet.event_cycle = current_core_cycle[fill_cpu];
-
-                    lower_level->add_wq(&writeback_packet);
-                }
-            }
-
+            
                 fill_cache(set, way, &MSHR.entry[mshr_index]);
-            }
+            
 
             // RFO marks cache line dirty
             if (cache_type == IS_L1D) {
@@ -321,6 +341,8 @@ void CACHE::handle_writeback()
 		}
             }
 
+            
+
             HIT[WQ.entry[index].type]++;
             ACCESS[WQ.entry[index].type]++;
 
@@ -438,6 +460,38 @@ void CACHE::handle_writeback()
                 else
                     way = find_victim(writeback_cpu, WQ.entry[index].instr_id, set, block[set], WQ.entry[index].ip, WQ.entry[index].full_addr, WQ.entry[index].type);
 
+              uint8_t  do_fill = 1;
+
+              if (cache_type == IS_L2C && block[set][way].valid && !block[set][way].dirty) {
+            
+                
+                    if (lower_level->get_occupancy(2, block[set][way].address) == lower_level->get_size(2, block[set][way].address)) {
+                        // lower level WQ is full, cannot replace this victim
+                        do_fill = 0;
+                        lower_level->increment_WQ_FULL(block[set][way].address);
+                        STALL[WQ.entry[index].type]++;
+
+                        DP ( if (warmup_complete[fill_cpu]) {
+                        cout << "[" << NAME << "] " << __func__ << "do_fill: " << +do_fill;
+                        cout << " lower level wq is full!" << " fill_addr: " << hex << MSHR.entry[mshr_index].address;
+                        cout << " victim_addr: " << block[set][way].tag << dec << endl; });
+                    }
+                    else {
+                        PACKET writeback_packet;
+
+                        writeback_packet.fill_level = fill_level << 1;
+                        writeback_packet.cpu = writeback_cpu;
+                        writeback_packet.address = block[set][way].address;
+                        writeback_packet.full_addr = block[set][way].full_addr;
+                        writeback_packet.data = block[set][way].data;
+                        writeback_packet.instr_id = WQ.entry[index].instr_id;
+                        writeback_packet.ip = 0; // writeback does not have ip
+                        writeback_packet.type = WRITEBACK;
+                        writeback_packet.event_cycle = current_core_cycle[writeback_cpu];
+                        lower_level->add_wq(&writeback_packet);
+                    }
+                
+            }
 #ifdef LLC_BYPASS
                 if ((cache_type == IS_LLC) && (way == LLC_WAY)) {
                     cerr << "LLC bypassing for writebacks is not allowed!" << endl;
@@ -445,10 +499,10 @@ void CACHE::handle_writeback()
                 }
 #endif
 
-                uint8_t  do_fill = 1;
+                
 
                 // is this dirty?
-                if (block[set][way].dirty) {
+                if (block[set][way].dirty  && block[set][way].valid)  {
 
                     // check if the lower level WQ has enough room to keep this writeback request
                     if (lower_level) { 
@@ -658,9 +712,12 @@ void CACHE::handle_read()
                 HIT[RQ.entry[index].type]++;
                 ACCESS[RQ.entry[index].type]++;
                 
+                if(cache_type==IS_LLC){
+                  block[set][way].valid=0;
+                }
                 // remove this entry from RQ
                 RQ.remove_queue(&RQ.entry[index]);
-		reads_available_this_cycle--;
+		            reads_available_this_cycle--;
             }
             else { // read miss
 
