@@ -1,0 +1,107 @@
+#include "cache.h"
+
+int MAX_ROUNDS = 100;
+int SCORE_MAX = 31;
+int BAD_SCORE = 1;
+int current_offset;
+int curr_round;
+int off_index;
+int best_score;
+int best_score_index;
+bool pref_on = true;
+
+int RRT[64];
+int score[26] ;
+
+int offsets[] = {1,2,3,4,5,6,8,9,10,12,15,16,18,20,24,25,27,30,32,36,40,45,48,50,54,60};
+
+void update_RRT(int addr){
+    int num = addr >> 6;
+    int index = num & (63);
+    num = num >> 6;
+    int tag = num & (4095);
+    RRT[index] = tag;
+}
+
+bool lookup(int addr){
+    int num = addr >> 6 ;
+    int index = num & (63);
+    num = num >> 6 ;
+    int tag = num & (4095);
+    if(tag == RRT[index])return true;
+    return false;
+}
+
+void best_offset_learning(int addr){
+    int lk = ((addr >> LOG2_BLOCK_SIZE) - offsets[off_index]) << LOG2_BLOCK_SIZE;
+    bool lookup_hit = lookup(lk);
+    if(lookup_hit){
+        score[off_index] += 1;
+        if(score[off_index] >= best_score){
+            best_score = score[off_index];
+            best_score_index = off_index;
+        }
+    }
+    off_index++;
+    if(off_index==26){
+        off_index = 0;
+        curr_round++;
+        if(best_score >= SCORE_MAX || curr_round >= MAX_ROUNDS){
+            current_offset = offsets[best_score_index];
+            if(best_score <= BAD_SCORE){
+                pref_on = false;
+            }else{
+                pref_on = true;
+            }
+            curr_round = 1;
+            best_score = 0;
+            best_score_index = 0;
+            for(int i = 0; i < 26; i++){
+                score[i] = 0;
+            }
+        }
+    }
+}
+
+void CACHE::l2c_prefetcher_initialize() {
+    cout << "CPU " << cpu << " L2C best offset prefetcher" << endl;
+    current_offset = 1;
+    curr_round = 1;
+    off_index = 0;
+    best_score = 0;
+    best_score_index = 0;
+    for(int i = 0; i < 64; i++){
+        RRT[i] = -1;
+    }
+    for(int i = 0; i < 26; i++){
+        score[i] = 0;
+    }
+    }
+
+uint32_t CACHE::l2c_prefetcher_operate(
+    uint64_t addr, uint64_t ip, uint8_t cache_hit, uint8_t type, uint32_t metadata_in) {
+    if (type != LOAD)
+        return metadata_in;
+
+    update_RRT(addr);
+
+    uint64_t pf_addr = ((addr >> LOG2_BLOCK_SIZE) + current_offset) << LOG2_BLOCK_SIZE;
+
+    DP(if (warmup_complete[cpu]) {
+        cout << "[" << NAME << "] " << _func_ << hex << " base_cl: " << (addr >> LOG2_BLOCK_SIZE);
+        cout << " pf_cl: " << (pf_addr >> LOG2_BLOCK_SIZE) << " ip: " << ip << " cache_hit: " << +cache_hit
+             << " type: " << +type << endl;
+    });
+    if(pref_on){
+    prefetch_line(ip, addr, pf_addr, FILL_L2, 0);}
+
+    return metadata_in;
+}
+
+
+uint32_t CACHE::l2c_prefetcher_cache_fill(
+    uint64_t addr, uint32_t set, uint32_t way, uint8_t prefetch, uint64_t evicted_addr, uint32_t metadata_in) {
+    return metadata_in;
+}
+
+void CACHE::l2c_prefetcher_final_stats() { cout << "CPU " << cpu << " L2C next line prefetcher final stats" << endl; }  
