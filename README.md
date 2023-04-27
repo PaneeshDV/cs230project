@@ -67,7 +67,6 @@ Simulation results will be stored under "results_${N_SIM}M" as a form of "${TRAC
 * test.py (same as above but a python script)
 
 **Results**
-* folder results_10M (contains results generated for 10 million instructions as warmup and simulation )
 * These folders are the results generated when 20 million instruction for warmup and 30 million for simulation are used for all inclusion and replacement policies for the three traces.
   * results_30M_a ( When LLC_SET = NUM_CPUS*2048, LLC_WAY = 16)
   * results_30M_b ( When LLC_SET = NUM_CPUS*8192, LLC_WAY = 16)
